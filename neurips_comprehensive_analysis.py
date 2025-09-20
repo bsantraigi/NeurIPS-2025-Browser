@@ -116,35 +116,162 @@ class NeurIPSAnalyzer:
         authors = [author.strip() for author in author_string.split(',')]
         return [author for author in authors if author]
     
-    def extract_keywords(self, text_field='clean_abstract', top_k=50):
-        """Extract key terms using TF-IDF"""
+    def extract_keywords(self, text_field='clean_abstract', top_k=50, include_phrases=True):
+        """Extract key terms using TF-IDF with enhanced multi-word phrase detection"""
         
-        # Create TF-IDF vectorizer
-        vectorizer = TfidfVectorizer(
-            max_features=1000,
+        # Create multiple vectorizers for different n-gram ranges
+        single_words = TfidfVectorizer(
+            max_features=500,
             stop_words='english',
-            ngram_range=(1, 3),
+            ngram_range=(1, 1),
             min_df=3,
             max_df=0.7
         )
         
-        # Fit on abstracts
-        tfidf_matrix = vectorizer.fit_transform(self.df[text_field].fillna(''))
-        feature_names = vectorizer.get_feature_names_out()
+        multi_word_phrases = TfidfVectorizer(
+            max_features=500,
+            stop_words='english',
+            ngram_range=(2, 4),  # 2-4 word phrases
+            min_df=2,  # Lower threshold for phrases
+            max_df=0.6,
+            token_pattern=r'\b[a-zA-Z][a-zA-Z0-9]*\b'  # Allow alphanumeric tokens
+        )
         
-        # Get mean TF-IDF scores
-        mean_scores = np.mean(tfidf_matrix.toarray(), axis=0)
+        # Extract text data
+        texts = self.df[text_field].fillna('')
         
-        # Create keyword DataFrame
-        keywords_df = pd.DataFrame({
-            'keyword': feature_names,
-            'score': mean_scores
-        }).sort_values('score', ascending=False).head(top_k)
+        # Fit vectorizers
+        single_tfidf = single_words.fit_transform(texts)
+        single_features = single_words.get_feature_names_out()
+        single_scores = np.mean(single_tfidf.toarray(), axis=0)
+        
+        # Combine results
+        keywords_data = []
+        
+        # Add single words
+        for i, feature in enumerate(single_features):
+            keywords_data.append({
+                'keyword': feature,
+                'score': single_scores[i],
+                'type': 'single_word',
+                'word_count': 1
+            })
+        
+        if include_phrases:
+            # Add multi-word phrases
+            phrase_tfidf = multi_word_phrases.fit_transform(texts)
+            phrase_features = multi_word_phrases.get_feature_names_out()
+            phrase_scores = np.mean(phrase_tfidf.toarray(), axis=0)
+            
+            for i, feature in enumerate(phrase_features):
+                # Boost score for longer phrases as they're often more specific
+                word_count = len(feature.split())
+                boosted_score = phrase_scores[i] * (1.2 ** (word_count - 2))
+                
+                keywords_data.append({
+                    'keyword': feature,
+                    'score': boosted_score,
+                    'type': 'multi_word',
+                    'word_count': word_count
+                })
+        
+        # Create comprehensive keyword DataFrame
+        keywords_df = pd.DataFrame(keywords_data)
+        keywords_df = keywords_df.sort_values('score', ascending=False).head(top_k)
         
         return keywords_df
     
+    def detect_technical_phrases(self, text_field='clean_abstract'):
+        """Detect technical multi-word phrases and domain-specific terminology"""
+        
+        # Define patterns for different types of technical phrases
+        technical_patterns = {
+            'ml_methods': [
+                r'\b(?:deep|neural|machine|transfer|reinforcement|supervised|unsupervised|semi-supervised)\s+learning\b',
+                r'\b(?:gradient|stochastic|batch)\s+(?:descent|optimization|boosting)\b',
+                r'\b(?:convolutional|recurrent|transformer|attention|self-attention)\s+(?:neural\s+)?networks?\b',
+                r'\b(?:generative|variational|graph|capsule)\s+(?:adversarial\s+)?networks?\b',
+                r'\b(?:monte|markov)\s+carlo\b',
+                r'\b(?:expectation|variational)\s+maximization\b',
+                r'\b(?:principal|independent)\s+component\s+analysis\b',
+                r'\b(?:support|kernel)\s+(?:vector|ridge)\s+(?:machines?|regression)\b',
+                r'\b(?:random|decision|regression)\s+(?:forests?|trees?)\b',
+                r'\b(?:k-means|hierarchical|spectral|density-based)\s+clustering\b'
+            ],
+            'ai_concepts': [
+                r'\b(?:artificial|general|narrow)\s+intelligence\b',
+                r'\b(?:computer|machine)\s+vision\b',
+                r'\b(?:natural|computational)\s+language\s+(?:processing|understanding|generation)\b',
+                r'\b(?:speech|audio|image|video|text)\s+(?:recognition|generation|synthesis|processing)\b',
+                r'\b(?:knowledge|information)\s+(?:graphs?|extraction|retrieval)\b',
+                r'\b(?:expert|recommendation|dialog|conversational)\s+systems?\b',
+                r'\b(?:multi-modal|cross-modal|multimodal)\s+(?:learning|models?|representation)\b',
+                r'\b(?:few-shot|zero-shot|one-shot)\s+learning\b',
+                r'\b(?:meta|continual|lifelong|incremental)\s+learning\b',
+                r'\b(?:federated|distributed|parallel)\s+(?:learning|computing|training)\b'
+            ],
+            'data_science': [
+                r'\b(?:big|small|synthetic|augmented)\s+data\b',
+                r'\b(?:data|feature|representation)\s+(?:mining|selection|engineering|learning)\b',
+                r'\b(?:dimensionality|feature)\s+reduction\b',
+                r'\b(?:anomaly|outlier|novelty)\s+detection\b',
+                r'\b(?:time|sequential|temporal)\s+(?:series|data|modeling)\b',
+                r'\b(?:causal|statistical)\s+(?:inference|modeling|analysis)\b',
+                r'\b(?:hypothesis|significance)\s+testing\b',
+                r'\b(?:cross|k-fold)\s+validation\b'
+            ],
+            'optimization': [
+                r'\b(?:convex|non-convex|constrained|unconstrained)\s+optimization\b',
+                r'\b(?:linear|quadratic|semidefinite)\s+programming\b',
+                r'\b(?:genetic|evolutionary|swarm)\s+(?:algorithms?|optimization)\b',
+                r'\b(?:simulated|quantum)\s+annealing\b',
+                r'\b(?:gradient|coordinate|proximal)\s+(?:descent|ascent|methods?)\b',
+                r'\b(?:adam|adagrad|rmsprop)\s+optimizer\b'
+            ],
+            'applications': [
+                r'\b(?:autonomous|self-driving)\s+(?:vehicles?|cars?|systems?)\b',
+                r'\b(?:medical|clinical|healthcare)\s+(?:diagnosis|imaging|informatics)\b',
+                r'\b(?:drug|molecular)\s+(?:discovery|design|screening)\b',
+                r'\b(?:financial|algorithmic)\s+(?:trading|modeling|analysis)\b',
+                r'\b(?:climate|weather)\s+(?:modeling|prediction|forecasting)\b',
+                r'\b(?:smart|intelligent)\s+(?:cities|grids?|transportation)\b',
+                r'\b(?:social|sentiment|emotion)\s+(?:media|analysis|recognition)\b',
+                r'\b(?:robotic|human-robot)\s+(?:control|interaction|manipulation)\b'
+            ]
+        }
+        
+        # Extract all text for analysis
+        all_text = ' '.join(self.df[text_field].fillna('')).lower()
+        
+        detected_phrases = {}
+        for category, patterns in technical_patterns.items():
+            detected_phrases[category] = []
+            for pattern in patterns:
+                matches = re.findall(pattern, all_text, re.IGNORECASE)
+                if matches:
+                    # Count frequency of each unique match
+                    match_counts = Counter(matches)
+                    for phrase, count in match_counts.items():
+                        if count >= 2:  # Only include phrases that appear multiple times
+                            detected_phrases[category].append({
+                                'phrase': phrase,
+                                'frequency': count,
+                                'category': category
+                            })
+        
+        # Flatten and create DataFrame
+        all_phrases = []
+        for category, phrases in detected_phrases.items():
+            all_phrases.extend(phrases)
+        
+        phrases_df = pd.DataFrame(all_phrases)
+        if not phrases_df.empty:
+            phrases_df = phrases_df.sort_values('frequency', ascending=False)
+        
+        return phrases_df, detected_phrases
+    
     def topic_clustering(self, n_clusters=15, text_field='clean_abstract'):
-        """Perform topic clustering on papers"""
+        """Perform topic clustering on papers with enhanced phrase-based analysis"""
         
         texts = self.df[text_field].fillna('').tolist()
         
@@ -166,14 +293,15 @@ class NeurIPSAnalyzer:
                 self.use_embeddings = False
                 
         if not self.use_embeddings:
-            # Fallback: TF-IDF based clustering
-            print("📊 Using TF-IDF for clustering...")
+            # Enhanced TF-IDF based clustering with multi-word phrases
+            print("📊 Using enhanced TF-IDF for clustering...")
             vectorizer = TfidfVectorizer(
-                max_features=1000,
+                max_features=1500,
                 stop_words='english',
-                ngram_range=(1, 2),
-                min_df=3,
-                max_df=0.7
+                ngram_range=(1, 3),  # Include up to 3-word phrases
+                min_df=2,  # Lower threshold to capture more technical terms
+                max_df=0.7,
+                token_pattern=r'\b[a-zA-Z][a-zA-Z0-9]*\b'
             )
             
             tfidf_matrix = vectorizer.fit_transform(texts)
@@ -188,28 +316,122 @@ class NeurIPSAnalyzer:
         # Add clusters to dataframe
         self.df['topic_cluster'] = clusters
         
-        # Analyze clusters
+        # Enhanced cluster analysis with multi-word phrase detection
         cluster_analysis = []
         for i in range(n_clusters):
             cluster_papers = self.df[self.df['topic_cluster'] == i]
             
-            # Get representative keywords for this cluster
+            # Combine all text from this cluster
             cluster_text = ' '.join(cluster_papers[text_field].fillna(''))
-            vectorizer = TfidfVectorizer(max_features=10, stop_words='english')
+            
+            # Extract both single words and multi-word phrases for cluster characterization
+            # Single words
+            single_vectorizer = TfidfVectorizer(
+                max_features=8, 
+                stop_words='english',
+                ngram_range=(1, 1),
+                min_df=1
+            )
+            
+            # Multi-word phrases  
+            phrase_vectorizer = TfidfVectorizer(
+                max_features=5,
+                stop_words='english', 
+                ngram_range=(2, 3),
+                min_df=1,
+                token_pattern=r'\b[a-zA-Z][a-zA-Z0-9]*\b'
+            )
+            
             try:
-                tfidf = vectorizer.fit_transform([cluster_text])
-                keywords = vectorizer.get_feature_names_out()
+                # Get single word keywords
+                single_tfidf = single_vectorizer.fit_transform([cluster_text])
+                single_keywords = single_vectorizer.get_feature_names_out()
+                
+                # Get phrase keywords
+                phrase_tfidf = phrase_vectorizer.fit_transform([cluster_text])
+                phrase_keywords = phrase_vectorizer.get_feature_names_out()
+                
+                # Combine keywords, prioritizing phrases
+                all_keywords = list(phrase_keywords) + list(single_keywords)
+                
             except:
-                keywords = ['cluster_' + str(i)]
+                all_keywords = [f'cluster_{i}']
+            
+            # Try to identify the dominant theme using technical phrase patterns
+            cluster_theme = self._identify_cluster_theme(cluster_text)
             
             cluster_analysis.append({
                 'cluster': i,
                 'size': len(cluster_papers),
-                'keywords': list(keywords),
+                'theme': cluster_theme,
+                'keywords': all_keywords[:10],  # Top 10 combined keywords
+                'phrases': list(phrase_keywords) if 'phrase_keywords' in locals() else [],
                 'sample_titles': cluster_papers['clean_name'].head(3).tolist()
             })
         
         return pd.DataFrame(cluster_analysis)
+    
+    def _identify_cluster_theme(self, cluster_text):
+        """Identify the dominant theme of a cluster using pattern matching"""
+        
+        themes = {
+            'Computer Vision': [
+                r'\b(?:computer\s+vision|image|visual|object\s+detection|segmentation|recognition)\b',
+                r'\b(?:convolutional|cnn|vision\s+transformer|vit)\b'
+            ],
+            'Natural Language Processing': [
+                r'\b(?:natural\s+language|nlp|text|language\s+model|transformer|bert|gpt)\b',
+                r'\b(?:sentiment|translation|summarization|question\s+answering)\b'
+            ],
+            'Reinforcement Learning': [
+                r'\b(?:reinforcement\s+learning|rl|policy|reward|agent|environment)\b',
+                r'\b(?:q-learning|actor-critic|deep\s+q|markov\s+decision)\b'
+            ],
+            'Deep Learning Architecture': [
+                r'\b(?:neural\s+network|deep\s+learning|architecture|layer|activation)\b',
+                r'\b(?:attention|transformer|residual|skip\s+connection)\b'
+            ],
+            'Optimization & Training': [
+                r'\b(?:optimization|gradient|training|learning\s+rate|optimizer)\b',
+                r'\b(?:convergence|backpropagation|stochastic|batch)\b'
+            ],
+            'Generative Models': [
+                r'\b(?:generative|gan|vae|diffusion|autoencoder|generation)\b',
+                r'\b(?:synthesis|sampling|latent\s+space|decoder)\b'
+            ],
+            'Graph Learning': [
+                r'\b(?:graph|node|edge|network|topological|relational)\b',
+                r'\b(?:gnn|graph\s+neural|social\s+network|knowledge\s+graph)\b'
+            ],
+            'Healthcare & Medicine': [
+                r'\b(?:medical|clinical|healthcare|diagnosis|treatment|patient)\b',
+                r'\b(?:biomedical|pharmaceutical|drug|molecular)\b'
+            ],
+            'Robotic & Control': [
+                r'\b(?:robot|robotic|control|manipulation|navigation|autonomous)\b',
+                r'\b(?:motion\s+planning|trajectory|sensor|actuator)\b'
+            ],
+            'Fairness & Ethics': [
+                r'\b(?:bias|fairness|ethical|responsible|interpretable|explainable)\b',
+                r'\b(?:algorithmic\s+fairness|trustworthy|accountability)\b'
+            ]
+        }
+        
+        cluster_text_lower = cluster_text.lower()
+        theme_scores = {}
+        
+        for theme, patterns in themes.items():
+            score = 0
+            for pattern in patterns:
+                matches = len(re.findall(pattern, cluster_text_lower, re.IGNORECASE))
+                score += matches
+            theme_scores[theme] = score
+        
+        # Return theme with highest score, or 'Mixed' if no clear winner
+        if max(theme_scores.values()) > 0:
+            return max(theme_scores, key=theme_scores.get)
+        else:
+            return 'Mixed Topics'
     
     def analyze_authors(self):
         """Analyze author networks and collaborations"""
@@ -248,97 +470,163 @@ class NeurIPSAnalyzer:
         }
     
     def assess_novelty_and_impact(self):
-        """Score papers based on novelty of problem statement and potential impact"""
+        """Score papers based on novelty of problem statement and potential impact using advanced pattern matching"""
         
         novelty_scores = []
         impact_scores = []
         
-        # Keywords indicating novel problem domains
-        novel_indicators = [
-            'multimodal', 'cross-modal', 'few-shot', 'zero-shot', 'meta-learning',
-            'emergent', 'foundation', 'large-scale', 'real-world', 'practical',
-            'robust', 'adversarial', 'interpretable', 'explainable', 'fairness',
-            'causal', 'quantum', 'neuromorphic', 'federated', 'privacy-preserving',
-            'sustainable', 'green', 'efficient', 'lightweight', 'edge computing',
-            'continual', 'lifelong', 'incremental', 'online', 'streaming'
-        ]
+        # Enhanced multi-word patterns for novelty detection
+        novel_patterns = {
+            'emerging_paradigms': [
+                r'\b(?:foundation|large language|multimodal|cross-modal)\s+models?\b',
+                r'\b(?:few-shot|zero-shot|in-context)\s+learning\b',
+                r'\b(?:prompt|instruction)\s+(?:engineering|tuning|learning)\b',
+                r'\b(?:chain of thought|reasoning|emergent)\s+(?:prompting|abilities|behaviors?)\b',
+                r'\b(?:retrieval|memory)\s+augmented\s+(?:generation|models?)\b',
+                r'\b(?:constitutional|self-supervised|contrastive)\s+(?:ai|learning|training)\b'
+            ],
+            'novel_architectures': [
+                r'\b(?:transformer|attention|self-attention)\s+(?:variants?|mechanisms?|architectures?)\b',
+                r'\b(?:mixture of experts?|sparse|efficient)\s+(?:models?|architectures?|transformers?)\b',
+                r'\b(?:neural|differentiable)\s+(?:odes?|programming|rendering|synthesis)\b',
+                r'\b(?:graph|geometric|equivariant)\s+(?:neural networks?|deep learning|representations?)\b',
+                r'\b(?:quantum|neuromorphic|spiking)\s+(?:neural networks?|computing|machine learning)\b',
+                r'\b(?:capsule|dynamic|adaptive)\s+(?:networks?|routing|architectures?)\b'
+            ],
+            'novel_methods': [
+                r'\b(?:meta|continual|lifelong|online)\s+learning\b',
+                r'\b(?:adversarial|robust|certified)\s+(?:training|defense|robustness)\b',
+                r'\b(?:causal|counterfactual|interventional)\s+(?:inference|reasoning|learning)\b',
+                r'\b(?:privacy-preserving|federated|distributed)\s+(?:learning|training|inference)\b',
+                r'\b(?:interpretable|explainable|trustworthy)\s+(?:ai|machine learning|models?)\b',
+                r'\b(?:automated|neural)\s+(?:architecture search|hyperparameter optimization)\b'
+            ],
+            'cross_domain': [
+                r'\b(?:vision|language|speech|audio|graph)\s+(?:and|plus|\+)\s+(?:language|vision|speech|audio|graph)\b',
+                r'\b(?:multi-task|multi-objective|multi-domain)\s+(?:learning|optimization|training)\b',
+                r'\b(?:transfer|domain)\s+(?:learning|adaptation|generalization)\b',
+                r'\b(?:simulation|real-world)\s+(?:transfer|gap|adaptation)\b'
+            ]
+        }
         
-        # Impact indicators (broad applicability, societal relevance)
-        impact_indicators = [
-            'healthcare', 'medical', 'clinical', 'diagnosis', 'treatment',
-            'autonomous', 'robotics', 'navigation', 'control', 'safety',
-            'climate', 'environment', 'energy', 'sustainability',
-            'finance', 'economics', 'trading', 'risk',
-            'education', 'learning', 'personalized', 'adaptive',
-            'social', 'recommendation', 'search', 'information retrieval',
-            'language', 'translation', 'communication', 'accessibility',
-            'creative', 'generation', 'synthesis', 'design'
-        ]
+        # Enhanced multi-word patterns for impact assessment
+        impact_patterns = {
+            'societal_applications': [
+                r'\b(?:climate|environmental|sustainability)\s+(?:modeling|prediction|optimization)\b',
+                r'\b(?:healthcare|medical|clinical)\s+(?:diagnosis|treatment|imaging|informatics)\b',
+                r'\b(?:drug|molecular|protein)\s+(?:discovery|design|folding|interaction)\b',
+                r'\b(?:autonomous|self-driving|intelligent)\s+(?:vehicles?|systems?|transportation)\b',
+                r'\b(?:smart|intelligent)\s+(?:cities|grids?|infrastructure|manufacturing)\b',
+                r'\b(?:financial|economic|market)\s+(?:modeling|prediction|analysis|trading)\b'
+            ],
+            'accessibility_fairness': [
+                r'\b(?:bias|fairness|equity)\s+(?:detection|mitigation|evaluation)\b',
+                r'\b(?:accessibility|inclusive|assistive)\s+(?:technology|ai|design)\b',
+                r'\b(?:low-resource|underrepresented)\s+(?:languages?|communities|populations)\b',
+                r'\b(?:algorithmic|ai|model)\s+(?:fairness|accountability|transparency)\b'
+            ],
+            'scalability_efficiency': [
+                r'\b(?:large-scale|massively parallel|distributed)\s+(?:training|inference|computing)\b',
+                r'\b(?:efficient|lightweight|mobile|edge)\s+(?:models?|architectures?|computing|deployment)\b',
+                r'\b(?:green|sustainable|energy-efficient)\s+(?:ai|computing|training)\b',
+                r'\b(?:real-time|low-latency|fast)\s+(?:inference|processing|optimization)\b'
+            ],
+            'generalization': [
+                r'\b(?:general|universal|unified)\s+(?:framework|paradigm|approach|architecture)\b',
+                r'\b(?:foundation|pretrained|general-purpose)\s+(?:models?|representations?)\b',
+                r'\b(?:transfer|generalization|adaptation)\s+(?:learning|capabilities?|across domains)\b',
+                r'\b(?:versatile|flexible|modular)\s+(?:architectures?|frameworks?|systems?)\b'
+            ]
+        }
         
         for idx, row in self.df.iterrows():
             text = (row['clean_name'] + ' ' + row['clean_abstract']).lower()
             
-            # Novelty score
+            # Novelty score calculation
             novelty_score = 0
             
-            # 1. Novel keyword presence
-            novel_matches = sum(1 for term in novel_indicators if term in text)
-            novelty_score += novel_matches * 2
+            # 1. Pattern-based novelty detection
+            for category, patterns in novel_patterns.items():
+                category_matches = 0
+                for pattern in patterns:
+                    matches = len(re.findall(pattern, text, re.IGNORECASE))
+                    category_matches += matches
+                
+                # Weight different categories
+                weights = {
+                    'emerging_paradigms': 3.0,
+                    'novel_architectures': 2.5, 
+                    'novel_methods': 2.0,
+                    'cross_domain': 2.5
+                }
+                novelty_score += category_matches * weights.get(category, 1.0)
             
-            # 2. Cross-domain indicators (combining different fields)
-            domain_terms = ['vision', 'language', 'speech', 'audio', 'graph', 
-                          'reinforcement', 'supervised', 'unsupervised', 'generative']
-            domain_matches = sum(1 for term in domain_terms if term in text)
-            if domain_matches >= 2:
-                novelty_score += 3  # Cross-domain bonus
+            # 2. Technical complexity indicators
+            complexity_phrases = [
+                r'\b(?:multi-modal|multimodal|cross-modal)\b',
+                r'\b(?:hierarchical|compositional|modular)\b',
+                r'\b(?:end-to-end|jointly|simultaneously)\b',
+                r'\b(?:scalable|generalizable|transferable)\b'
+            ]
             
-            # 3. Problem complexity indicators
-            complexity_terms = ['multi-task', 'multi-objective', 'hierarchical', 
-                              'compositional', 'modular', 'scalable']
-            complexity_matches = sum(1 for term in complexity_terms if term in text)
-            novelty_score += complexity_matches * 1.5
+            for pattern in complexity_phrases:
+                matches = len(re.findall(pattern, text, re.IGNORECASE))
+                novelty_score += matches * 1.5
             
-            # 4. Semantic novelty (if embeddings available)
+            # 3. Semantic novelty (if embeddings available)
             if self.embeddings is not None:
                 try:
-                    # Compare to cluster center
                     cluster = row['topic_cluster']
                     cluster_papers = self.df[self.df['topic_cluster'] == cluster]
                     if len(cluster_papers) > 1:
                         cluster_embeddings = self.embeddings[cluster_papers.index]
                         center = np.mean(cluster_embeddings, axis=0)
                         similarity = cosine_similarity([self.embeddings[idx]], [center])[0][0]
-                        # Lower similarity to cluster center = higher novelty
-                        semantic_novelty = (1 - similarity) * 5
+                        semantic_novelty = (1 - similarity) * 4
                         novelty_score += semantic_novelty
-                except Exception as e:
-                    # Skip semantic novelty if there's an issue
+                except Exception:
                     pass
             
-            # Impact score
+            # Impact score calculation
             impact_score = 0
             
-            # 1. Direct impact keywords
-            impact_matches = sum(1 for term in impact_indicators if term in text)
-            impact_score += impact_matches * 2
+            # 1. Pattern-based impact detection
+            for category, patterns in impact_patterns.items():
+                category_matches = 0
+                for pattern in patterns:
+                    matches = len(re.findall(pattern, text, re.IGNORECASE))
+                    category_matches += matches
+                
+                # Weight different categories
+                weights = {
+                    'societal_applications': 3.0,
+                    'accessibility_fairness': 2.5,
+                    'scalability_efficiency': 2.0,
+                    'generalization': 2.5
+                }
+                impact_score += category_matches * weights.get(category, 1.0)
             
-            # 2. Generalizability indicators
-            general_terms = ['general', 'universal', 'unified', 'framework', 
-                           'paradigm', 'foundation', 'principle']
-            general_matches = sum(1 for term in general_terms if term in text)
-            impact_score += general_matches * 1.5
+            # 2. Scale and deployment indicators
+            scale_phrases = [
+                r'\b(?:billion|trillion|million)\s+(?:parameters?|samples?|users?)\b',
+                r'\b(?:production|deployment|industry|commercial)\s+(?:ready|scale|application)\b',
+                r'\b(?:open-source|reproducible|accessible)\b'
+            ]
             
-            # 3. Scale indicators
-            scale_terms = ['large-scale', 'massive', 'billion', 'trillion', 
-                         'distributed', 'parallel', 'cloud']
-            scale_matches = sum(1 for term in scale_terms if term in text)
-            impact_score += scale_matches * 1.2
+            for pattern in scale_phrases:
+                matches = len(re.findall(pattern, text, re.IGNORECASE))
+                impact_score += matches * 2.0
             
-            # 4. Real-world application indicators
-            real_world_terms = ['practical', 'deployment', 'production', 'industry', 
-                              'commercial', 'application', 'real-world']
-            rw_matches = sum(1 for term in real_world_terms if term in text)
-            impact_score += rw_matches * 2
+            # 3. Collaboration and interdisciplinary indicators
+            collab_phrases = [
+                r'\b(?:interdisciplinary|multidisciplinary|collaborative)\b',
+                r'\b(?:human-ai|human-computer|human-machine)\s+(?:interaction|collaboration|interface)\b',
+                r'\b(?:social|ethical|responsible)\s+(?:ai|implications|considerations)\b'
+            ]
+            
+            for pattern in collab_phrases:
+                matches = len(re.findall(pattern, text, re.IGNORECASE))
+                impact_score += matches * 1.8
             
             novelty_scores.append(novelty_score)
             impact_scores.append(impact_score)
@@ -416,22 +704,33 @@ class NeurIPSAnalyzer:
         return fig
     
     def run_complete_analysis(self):
-        """Run the complete analysis pipeline"""
+        """Run the complete analysis pipeline with enhanced multi-word phrase support"""
         
-        print("🚀 Starting comprehensive NeurIPS 2025 analysis...")
+        print("🚀 Starting comprehensive NeurIPS 2025 analysis with enhanced phrase detection...")
         
         # Load data
         self.load_data()
         
-        # Extract keywords
-        print("\n📝 Extracting keywords...")
-        keywords = self.extract_keywords()
-        print(f"Top 10 keywords: {', '.join(keywords.head(10)['keyword'].tolist())}")
+        # Extract keywords with multi-word phrases
+        print("\n📝 Extracting keywords and multi-word phrases...")
+        keywords = self.extract_keywords(include_phrases=True)
+        print(f"Top 10 keywords/phrases: {', '.join(keywords.head(10)['keyword'].tolist())}")
         
-        # Topic clustering
-        print("\n🎯 Performing topic clustering...")
+        # Detect technical phrases
+        print("\n🔍 Detecting technical phrase patterns...")
+        technical_phrases, phrase_categories = self.detect_technical_phrases()
+        if not technical_phrases.empty:
+            print(f"Found {len(technical_phrases)} technical phrases across {len(phrase_categories)} categories")
+            print("Top technical phrases by category:")
+            for category in phrase_categories:
+                if phrase_categories[category]:
+                    top_phrase = max(phrase_categories[category], key=lambda x: x['frequency'])
+                    print(f"  {category}: '{top_phrase['phrase']}' ({top_phrase['frequency']} occurrences)")
+        
+        # Topic clustering with enhanced phrase analysis
+        print("\n🎯 Performing enhanced topic clustering...")
         clusters = self.topic_clustering()
-        print(f"Created {len(clusters)} topic clusters")
+        print(f"Created {len(clusters)} topic clusters with thematic analysis")
         
         # Author analysis
         print("\n👥 Analyzing author networks...")
@@ -439,8 +738,8 @@ class NeurIPSAnalyzer:
         print(f"Total authors: {author_stats['total_authors']}")
         print(f"Avg authors per paper: {author_stats['avg_authors_per_paper']:.2f}")
         
-        # Novelty and impact assessment
-        print("\n⭐ Assessing novelty and impact potential...")
+        # Enhanced novelty and impact assessment
+        print("\n⭐ Assessing novelty and impact with advanced pattern matching...")
         self.assess_novelty_and_impact()
         
         # Generate rankings
@@ -451,15 +750,36 @@ class NeurIPSAnalyzer:
         print("\n📊 Creating visualizations...")
         self.create_visualizations()
         
-        # Summary report
+        # Enhanced summary report
         print("\n" + "="*60)
-        print("📊 ANALYSIS SUMMARY")
+        print("📊 ENHANCED ANALYSIS SUMMARY")
         print("="*60)
         
         print(f"📄 Total papers analyzed: {len(self.df)}")
         print(f"🎭 Unique authors: {author_stats['total_authors']}")
         print(f"🤝 Collaboration connections: {author_stats['collaboration_edges']}")
-        print(f"🏷️  Top keywords: {', '.join(keywords.head(5)['keyword'].tolist())}")
+        
+        # Show keyword types breakdown
+        single_word_count = len(keywords[keywords['type'] == 'single_word'])
+        multi_word_count = len(keywords[keywords['type'] == 'multi_word'])
+        print(f"🏷️  Keywords: {single_word_count} single-word, {multi_word_count} multi-word phrases")
+        
+        # Show top keywords by type
+        print(f"📝 Top single words: {', '.join(keywords[keywords['type'] == 'single_word'].head(3)['keyword'].tolist())}")
+        if multi_word_count > 0:
+            print(f"🔤 Top multi-word phrases: {', '.join(keywords[keywords['type'] == 'multi_word'].head(3)['keyword'].tolist())}")
+        
+        # Show cluster themes
+        print(f"\n🎯 Topic clusters by theme:")
+        for _, cluster in clusters.iterrows():
+            print(f"  Cluster {cluster['cluster']}: {cluster['theme']} ({cluster['size']} papers)")
+        
+        # Technical phrase summary
+        if not technical_phrases.empty:
+            print(f"\n🔬 Technical phrase analysis:")
+            phrase_summary = technical_phrases.groupby('category')['frequency'].sum().sort_values(ascending=False)
+            for category, total_freq in phrase_summary.head(5).items():
+                print(f"  {category}: {total_freq} total mentions")
         
         print(f"\n🌟 Novelty scores - Mean: {self.df['novelty_score'].mean():.2f}, Max: {self.df['novelty_score'].max():.2f}")
         print(f"🚀 Impact scores - Mean: {self.df['impact_score'].mean():.2f}, Max: {self.df['impact_score'].max():.2f}")
@@ -478,6 +798,8 @@ class NeurIPSAnalyzer:
         
         return {
             'keywords': keywords,
+            'technical_phrases': technical_phrases,
+            'phrase_categories': phrase_categories,
             'clusters': clusters,
             'author_stats': author_stats,
             'rankings': rankings,
@@ -493,5 +815,10 @@ if __name__ == "__main__":
     results['rankings']['best_combined'].to_csv('neurips_2025_top_papers.csv', index=False)
     results['keywords'].to_csv('neurips_2025_keywords.csv', index=False)
     
+    # Save technical phrases if any were found
+    if not results['technical_phrases'].empty:
+        results['technical_phrases'].to_csv('neurips_2025_technical_phrases.csv', index=False)
+        print(f"💾 Technical phrases saved to neurips_2025_technical_phrases.csv")
+    
     print(f"\n💾 Detailed results saved to CSV files!")
-    print("🎯 Analysis complete!")
+    print("🎯 Enhanced analysis complete!")
