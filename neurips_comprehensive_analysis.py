@@ -150,10 +150,11 @@ class NeurIPSAnalyzer:
         
         if self.use_embeddings:
             try:
-                # Generate embeddings with CPU
-                print("🔄 Generating embeddings on CPU (this may take a few minutes)...")
+                # Generate embeddings using detected device
+                device_name = "GPU" if self.device == 'cuda' else "CPU"
+                print(f"🔄 Generating embeddings on {device_name} (this may take a few minutes)...")
                 self.embeddings = self.model.encode(texts, show_progress_bar=True, 
-                                                  batch_size=32, device='cpu')
+                                                  batch_size=32, device=self.device)
                 
                 # K-means clustering on embeddings
                 kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
