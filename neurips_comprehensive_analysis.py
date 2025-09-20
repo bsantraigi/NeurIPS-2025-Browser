@@ -181,95 +181,6 @@ class NeurIPSAnalyzer:
         
         return keywords_df
     
-    def detect_technical_phrases(self, text_field='clean_abstract'):
-        """Detect technical multi-word phrases and domain-specific terminology"""
-        
-        # Define patterns for different types of technical phrases
-        technical_patterns = {
-            'ml_methods': [
-                r'\b(?:deep|neural|machine|transfer|reinforcement|supervised|unsupervised|semi-supervised)\s+learning\b',
-                r'\b(?:gradient|stochastic|batch)\s+(?:descent|optimization|boosting)\b',
-                r'\b(?:convolutional|recurrent|transformer|attention|self-attention)\s+(?:neural\s+)?networks?\b',
-                r'\b(?:generative|variational|graph|capsule)\s+(?:adversarial\s+)?networks?\b',
-                r'\b(?:monte|markov)\s+carlo\b',
-                r'\b(?:expectation|variational)\s+maximization\b',
-                r'\b(?:principal|independent)\s+component\s+analysis\b',
-                r'\b(?:support|kernel)\s+(?:vector|ridge)\s+(?:machines?|regression)\b',
-                r'\b(?:random|decision|regression)\s+(?:forests?|trees?)\b',
-                r'\b(?:k-means|hierarchical|spectral|density-based)\s+clustering\b'
-            ],
-            'ai_concepts': [
-                r'\b(?:artificial|general|narrow)\s+intelligence\b',
-                r'\b(?:computer|machine)\s+vision\b',
-                r'\b(?:natural|computational)\s+language\s+(?:processing|understanding|generation)\b',
-                r'\b(?:speech|audio|image|video|text)\s+(?:recognition|generation|synthesis|processing)\b',
-                r'\b(?:knowledge|information)\s+(?:graphs?|extraction|retrieval)\b',
-                r'\b(?:expert|recommendation|dialog|conversational)\s+systems?\b',
-                r'\b(?:multi-modal|cross-modal|multimodal)\s+(?:learning|models?|representation)\b',
-                r'\b(?:few-shot|zero-shot|one-shot)\s+learning\b',
-                r'\b(?:meta|continual|lifelong|incremental)\s+learning\b',
-                r'\b(?:federated|distributed|parallel)\s+(?:learning|computing|training)\b'
-            ],
-            'data_science': [
-                r'\b(?:big|small|synthetic|augmented)\s+data\b',
-                r'\b(?:data|feature|representation)\s+(?:mining|selection|engineering|learning)\b',
-                r'\b(?:dimensionality|feature)\s+reduction\b',
-                r'\b(?:anomaly|outlier|novelty)\s+detection\b',
-                r'\b(?:time|sequential|temporal)\s+(?:series|data|modeling)\b',
-                r'\b(?:causal|statistical)\s+(?:inference|modeling|analysis)\b',
-                r'\b(?:hypothesis|significance)\s+testing\b',
-                r'\b(?:cross|k-fold)\s+validation\b'
-            ],
-            'optimization': [
-                r'\b(?:convex|non-convex|constrained|unconstrained)\s+optimization\b',
-                r'\b(?:linear|quadratic|semidefinite)\s+programming\b',
-                r'\b(?:genetic|evolutionary|swarm)\s+(?:algorithms?|optimization)\b',
-                r'\b(?:simulated|quantum)\s+annealing\b',
-                r'\b(?:gradient|coordinate|proximal)\s+(?:descent|ascent|methods?)\b',
-                r'\b(?:adam|adagrad|rmsprop)\s+optimizer\b'
-            ],
-            'applications': [
-                r'\b(?:autonomous|self-driving)\s+(?:vehicles?|cars?|systems?)\b',
-                r'\b(?:medical|clinical|healthcare)\s+(?:diagnosis|imaging|informatics)\b',
-                r'\b(?:drug|molecular)\s+(?:discovery|design|screening)\b',
-                r'\b(?:financial|algorithmic)\s+(?:trading|modeling|analysis)\b',
-                r'\b(?:climate|weather)\s+(?:modeling|prediction|forecasting)\b',
-                r'\b(?:smart|intelligent)\s+(?:cities|grids?|transportation)\b',
-                r'\b(?:social|sentiment|emotion)\s+(?:media|analysis|recognition)\b',
-                r'\b(?:robotic|human-robot)\s+(?:control|interaction|manipulation)\b'
-            ]
-        }
-        
-        # Extract all text for analysis
-        all_text = ' '.join(self.df[text_field].fillna('')).lower()
-        
-        detected_phrases = {}
-        for category, patterns in technical_patterns.items():
-            detected_phrases[category] = []
-            for pattern in patterns:
-                matches = re.findall(pattern, all_text, re.IGNORECASE)
-                if matches:
-                    # Count frequency of each unique match
-                    match_counts = Counter(matches)
-                    for phrase, count in match_counts.items():
-                        if count >= 2:  # Only include phrases that appear multiple times
-                            detected_phrases[category].append({
-                                'phrase': phrase,
-                                'frequency': count,
-                                'category': category
-                            })
-        
-        # Flatten and create DataFrame
-        all_phrases = []
-        for category, phrases in detected_phrases.items():
-            all_phrases.extend(phrases)
-        
-        phrases_df = pd.DataFrame(all_phrases)
-        if not phrases_df.empty:
-            phrases_df = phrases_df.sort_values('frequency', ascending=False)
-        
-        return phrases_df, detected_phrases
-    
     def topic_clustering(self, n_clusters=15, text_field='clean_abstract'):
         """Perform topic clustering on papers with enhanced phrase-based analysis"""
         
@@ -716,17 +627,6 @@ class NeurIPSAnalyzer:
         keywords = self.extract_keywords(include_phrases=True)
         print(f"Top 10 keywords/phrases: {', '.join(keywords.head(10)['keyword'].tolist())}")
         
-        # Detect technical phrases
-        print("\n🔍 Detecting technical phrase patterns...")
-        technical_phrases, phrase_categories = self.detect_technical_phrases()
-        if not technical_phrases.empty:
-            print(f"Found {len(technical_phrases)} technical phrases across {len(phrase_categories)} categories")
-            print("Top technical phrases by category:")
-            for category in phrase_categories:
-                if phrase_categories[category]:
-                    top_phrase = max(phrase_categories[category], key=lambda x: x['frequency'])
-                    print(f"  {category}: '{top_phrase['phrase']}' ({top_phrase['frequency']} occurrences)")
-        
         # Topic clustering with enhanced phrase analysis
         print("\n🎯 Performing enhanced topic clustering...")
         clusters = self.topic_clustering()
@@ -774,13 +674,6 @@ class NeurIPSAnalyzer:
         for _, cluster in clusters.iterrows():
             print(f"  Cluster {cluster['cluster']}: {cluster['theme']} ({cluster['size']} papers)")
         
-        # Technical phrase summary
-        if not technical_phrases.empty:
-            print(f"\n🔬 Technical phrase analysis:")
-            phrase_summary = technical_phrases.groupby('category')['frequency'].sum().sort_values(ascending=False)
-            for category, total_freq in phrase_summary.head(5).items():
-                print(f"  {category}: {total_freq} total mentions")
-        
         print(f"\n🌟 Novelty scores - Mean: {self.df['novelty_score'].mean():.2f}, Max: {self.df['novelty_score'].max():.2f}")
         print(f"🚀 Impact scores - Mean: {self.df['impact_score'].mean():.2f}, Max: {self.df['impact_score'].max():.2f}")
         
@@ -798,8 +691,6 @@ class NeurIPSAnalyzer:
         
         return {
             'keywords': keywords,
-            'technical_phrases': technical_phrases,
-            'phrase_categories': phrase_categories,
             'clusters': clusters,
             'author_stats': author_stats,
             'rankings': rankings,
@@ -814,11 +705,6 @@ if __name__ == "__main__":
     # Save detailed results
     results['rankings']['best_combined'].to_csv('neurips_2025_top_papers.csv', index=False)
     results['keywords'].to_csv('neurips_2025_keywords.csv', index=False)
-    
-    # Save technical phrases if any were found
-    if not results['technical_phrases'].empty:
-        results['technical_phrases'].to_csv('neurips_2025_technical_phrases.csv', index=False)
-        print(f"💾 Technical phrases saved to neurips_2025_technical_phrases.csv")
     
     print(f"\n💾 Detailed results saved to CSV files!")
     print("🎯 Enhanced analysis complete!")
