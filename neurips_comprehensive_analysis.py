@@ -1,4 +1,5 @@
 import json
+import os
 import pandas as pd
 import numpy as np
 from collections import Counter, defaultdict
@@ -181,6 +182,99 @@ class NeurIPSAnalyzer:
         
         return keywords_df
     
+    def compute_text_statistics(self):
+        """Compute various text statistics for each paper"""
+        
+        def safe_len(text):
+            return len(str(text)) if pd.notna(text) else 0
+        
+        def safe_word_count(text):
+            return len(str(text).split()) if pd.notna(text) else 0
+        
+        def estimate_readability(text):
+            """Simple readability estimate based on sentence and word complexity"""
+            if pd.isna(text) or not text:
+                return 0
+            
+            text_str = str(text)
+            sentences = text_str.count('.') + text_str.count('!') + text_str.count('?') + 1
+            words = len(text_str.split())
+            if sentences == 0 or words == 0:
+                return 0
+                
+            # Simple Flesch-style approximation
+            avg_sentence_length = words / sentences
+            # Count syllables (very rough approximation)
+            syllables = sum([max(1, len([c for c in word if c.lower() in 'aeiou'])) for word in text_str.split()])
+            avg_syllables = syllables / words if words > 0 else 0
+            
+            # Simplified readability score (higher = more readable)
+            readability = max(0, 206.835 - (1.015 * avg_sentence_length) - (84.6 * avg_syllables))
+            return round(readability, 2)
+        
+        # Title statistics
+        self.df['title_length_chars'] = self.df['clean_name'].apply(safe_len)
+        self.df['title_length_words'] = self.df['clean_name'].apply(safe_word_count)
+        
+        # Abstract statistics
+        self.df['abstract_length_chars'] = self.df['clean_abstract'].apply(safe_len)
+        self.df['abstract_length_words'] = self.df['clean_abstract'].apply(safe_word_count)
+        self.df['abstract_readability'] = self.df['clean_abstract'].apply(estimate_readability)
+        
+        # Combined text statistics
+        self.df['total_text_length'] = self.df['title_length_chars'] + self.df['abstract_length_chars']
+        self.df['total_word_count'] = self.df['title_length_words'] + self.df['abstract_length_words']
+        
+        return self
+    
+    def extract_per_paper_keywords(self, top_k_per_paper=5):
+        """Extract top keywords for each individual paper"""
+        
+        all_keywords_per_paper = []
+        
+        for idx, row in self.df.iterrows():
+            paper_text = str(row['clean_abstract']) if pd.notna(row['clean_abstract']) else ""
+            
+            if not paper_text.strip():
+                all_keywords_per_paper.append("")
+                continue
+            
+            try:
+                # Use TF-IDF on individual paper vs rest of corpus
+                vectorizer = TfidfVectorizer(
+                    max_features=50,
+                    stop_words='english',
+                    ngram_range=(1, 2),
+                    min_df=1,
+                    token_pattern=r'\b[a-zA-Z][a-zA-Z0-9]*\b'
+                )
+                
+                # Create mini-corpus with this paper and some others for comparison
+                other_texts = self.df['clean_abstract'].fillna('').sample(min(20, len(self.df))).tolist()
+                mini_corpus = [paper_text] + other_texts
+                
+                tfidf_matrix = vectorizer.fit_transform(mini_corpus)
+                feature_names = vectorizer.get_feature_names_out()
+                
+                # Get TF-IDF scores for the target paper (first in corpus)
+                paper_scores = tfidf_matrix[0].toarray().flatten()
+                
+                # Get top keywords for this paper
+                top_indices = paper_scores.argsort()[-top_k_per_paper:][::-1]
+                paper_keywords = [feature_names[i] for i in top_indices if paper_scores[i] > 0]
+                
+                all_keywords_per_paper.append("; ".join(paper_keywords))
+                
+            except Exception as e:
+                # Fallback: use simple word frequency
+                words = paper_text.lower().split()
+                word_freq = Counter([w for w in words if len(w) > 3 and w.isalpha()])
+                top_words = [word for word, count in word_freq.most_common(top_k_per_paper)]
+                all_keywords_per_paper.append("; ".join(top_words))
+        
+        self.df['paper_keywords'] = all_keywords_per_paper
+        return self
+    
     def topic_clustering(self, n_clusters=15, text_field='clean_abstract'):
         """Perform topic clustering on papers with enhanced phrase-based analysis"""
         
@@ -343,6 +437,69 @@ class NeurIPSAnalyzer:
             return max(theme_scores, key=theme_scores.get)
         else:
             return 'Mixed Topics'
+    
+    def compute_similarity_metrics(self):
+        """Compute similarity metrics if embeddings are available"""
+        
+        if self.embeddings is None or not hasattr(self, 'embeddings'):
+            # Add placeholder columns
+            self.df['cluster_similarity'] = 0.0
+            self.df['cluster_uniqueness'] = 0.0
+            self.df['avg_similarity_to_others'] = 0.0
+            return self
+        
+        cluster_similarities = []
+        cluster_uniqueness_scores = []
+        avg_similarities = []
+        
+        for idx, row in self.df.iterrows():
+            try:
+                paper_embedding = self.embeddings[idx].reshape(1, -1)
+                cluster_id = row['topic_cluster']
+                
+                # 1. Similarity to cluster centroid
+                cluster_papers = self.df[self.df['topic_cluster'] == cluster_id]
+                if len(cluster_papers) > 1:
+                    cluster_embeddings = self.embeddings[cluster_papers.index]
+                    cluster_centroid = np.mean(cluster_embeddings, axis=0).reshape(1, -1)
+                    cluster_sim = cosine_similarity(paper_embedding, cluster_centroid)[0][0]
+                else:
+                    cluster_sim = 1.0
+                
+                # 2. Uniqueness within cluster (inverse of average similarity to cluster members)
+                if len(cluster_papers) > 1:
+                    other_cluster_embeddings = self.embeddings[[i for i in cluster_papers.index if i != idx]]
+                    if len(other_cluster_embeddings) > 0:
+                        similarities_to_cluster = cosine_similarity(paper_embedding, other_cluster_embeddings)[0]
+                        avg_cluster_sim = np.mean(similarities_to_cluster)
+                        uniqueness = 1.0 - avg_cluster_sim
+                    else:
+                        uniqueness = 1.0
+                else:
+                    uniqueness = 1.0
+                
+                # 3. Average similarity to all other papers
+                other_embeddings = self.embeddings[[i for i in range(len(self.embeddings)) if i != idx]]
+                if len(other_embeddings) > 0:
+                    all_similarities = cosine_similarity(paper_embedding, other_embeddings)[0]
+                    avg_sim = np.mean(all_similarities)
+                else:
+                    avg_sim = 0.0
+                
+                cluster_similarities.append(round(cluster_sim, 4))
+                cluster_uniqueness_scores.append(round(uniqueness, 4))
+                avg_similarities.append(round(avg_sim, 4))
+                
+            except Exception as e:
+                cluster_similarities.append(0.0)
+                cluster_uniqueness_scores.append(0.0)
+                avg_similarities.append(0.0)
+        
+        self.df['cluster_similarity'] = cluster_similarities
+        self.df['cluster_uniqueness'] = cluster_uniqueness_scores
+        self.df['avg_similarity_to_others'] = avg_similarities
+        
+        return self
     
     def analyze_authors(self):
         """Analyze author networks and collaborations"""
@@ -610,9 +767,87 @@ class NeurIPSAnalyzer:
         
         plt.tight_layout()
         plt.savefig('neurips_2025_analysis.png', dpi=300, bbox_inches='tight')
-        plt.show()
+        plt.close()  # Close the figure to free memory
         
         return fig
+    
+    def export_full_dataframe(self, filename='neurips_2025_full_analysis.tsv'):
+        """Export comprehensive dataframe with all computed features to TSV"""
+        
+        # Define the columns we want to export in a logical order
+        export_columns = [
+            # Core paper information
+            'name',                          # Original paper title
+            'clean_name',                    # Cleaned paper title
+            'abstract',                      # Original abstract
+            'clean_abstract',                # Cleaned abstract
+            'speakers/authors',              # Original authors string
+            'author_list',                   # Parsed authors list
+            'num_authors',                   # Number of authors
+            'type',                          # Paper type
+            
+            # Text statistics
+            'title_length_chars',            # Title length in characters
+            'title_length_words',            # Title length in words
+            'abstract_length_chars',         # Abstract length in characters
+            'abstract_length_words',         # Abstract length in words
+            'abstract_readability',          # Readability score
+            'total_text_length',             # Combined title + abstract characters
+            'total_word_count',              # Combined title + abstract words
+            
+            # Keywords and content analysis
+            'paper_keywords',                # Top keywords for this specific paper
+            
+            # Topic clustering
+            'topic_cluster',                 # Assigned cluster ID
+            'cluster_theme',                 # Theme of the cluster
+            
+            # Similarity metrics (if available)
+            'cluster_similarity',            # Similarity to cluster centroid
+            'cluster_uniqueness',            # Uniqueness within cluster
+            'avg_similarity_to_others',      # Average similarity to all other papers
+            
+            # Scoring and ranking
+            'novelty_score',                 # Novelty assessment score
+            'impact_score',                  # Impact potential score
+            'combined_score',                # Combined novelty + impact score
+        ]
+        
+        # Check which columns actually exist in the dataframe
+        available_columns = [col for col in export_columns if col in self.df.columns]
+        missing_columns = [col for col in export_columns if col not in self.df.columns]
+        
+        if missing_columns:
+            print(f"⚠️  Warning: Missing columns in export: {missing_columns}")
+        
+        # Create export dataframe
+        export_df = self.df[available_columns].copy()
+        
+        # Convert list columns to string representation for TSV export
+        for col in export_df.columns:
+            if export_df[col].dtype == 'object':
+                export_df[col] = export_df[col].apply(lambda x: str(x) if pd.notna(x) else '')
+        
+        # Add paper index as first column
+        export_df.insert(0, 'paper_id', range(1, len(export_df) + 1))
+        
+        # Sort by combined score (highest first) for easier browsing
+        if 'combined_score' in export_df.columns:
+            export_df = export_df.sort_values('combined_score', ascending=False)
+        
+        # Export to TSV
+        export_df.to_csv(filename, sep='\t', index=False, encoding='utf-8')
+        
+        print(f"💾 Full analysis exported to {filename}")
+        print(f"📊 Exported {len(export_df)} papers with {len(export_df.columns)} features")
+        print(f"📁 File size: {os.path.getsize(filename) / (1024*1024):.1f} MB")
+        
+        # Print column summary
+        print("\n📋 Exported columns:")
+        for i, col in enumerate(export_df.columns, 1):
+            print(f"  {i:2d}. {col}")
+        
+        return export_df
     
     def run_complete_analysis(self):
         """Run the complete analysis pipeline with enhanced multi-word phrase support"""
@@ -642,6 +877,16 @@ class NeurIPSAnalyzer:
         print("\n⭐ Assessing novelty and impact with advanced pattern matching...")
         self.assess_novelty_and_impact()
         
+        # Compute additional features for comprehensive export
+        print("\n📏 Computing text statistics...")
+        self.compute_text_statistics()
+        
+        print("\n🔍 Extracting per-paper keywords...")
+        self.extract_per_paper_keywords()
+        
+        print("\n📐 Computing similarity metrics...")
+        self.compute_similarity_metrics()
+        
         # Generate rankings
         print("\n🏆 Generating paper rankings...")
         rankings = self.generate_rankings()
@@ -649,6 +894,10 @@ class NeurIPSAnalyzer:
         # Create visualizations
         print("\n📊 Creating visualizations...")
         self.create_visualizations()
+        
+        # Export comprehensive TSV
+        print("\n💾 Exporting comprehensive analysis to TSV...")
+        full_df = self.export_full_dataframe()
         
         # Enhanced summary report
         print("\n" + "="*60)
@@ -694,7 +943,8 @@ class NeurIPSAnalyzer:
             'clusters': clusters,
             'author_stats': author_stats,
             'rankings': rankings,
-            'dataframe': self.df
+            'dataframe': self.df,
+            'full_export': full_df
         }
 
 # Usage
