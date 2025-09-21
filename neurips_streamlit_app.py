@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import json
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Page config
 st.set_page_config(
@@ -20,6 +23,83 @@ def load_data():
         st.error("❌ Analysis file not found. Please run the comprehensive analysis first.")
         return None
 
+@st.cache_data
+def load_abstracts():
+    """Load abstracts from the JSON file"""
+    try:
+        with open('NeurIPS 2025 Events.json', 'r') as f:
+            data = json.load(f)
+        
+        # Create a mapping from paper name to abstract
+        abstracts = {}
+        for item in data:
+            name = item.get('name', '')
+            abstract = item.get('abstract', '')
+            abstracts[name] = abstract
+        
+        return abstracts
+    except FileNotFoundError:
+        st.error("❌ NeurIPS JSON file not found.")
+        return {}
+
+@st.cache_data
+def prepare_search_index(df, abstracts):
+    """Prepare TF-IDF search index"""
+    documents = []
+    paper_ids = []
+    
+    for _, row in df.iterrows():
+        # Combine title, keywords, theme, and abstract
+        title = str(row.get('name', ''))
+        keywords = str(row.get('paper_keywords', ''))
+        theme = str(row.get('cluster_theme', ''))
+        abstract = abstracts.get(title, '')
+        
+        # Create document text
+        doc_text = f"{title} {keywords} {theme} {abstract}"
+        documents.append(doc_text)
+        paper_ids.append(row['paper_id'])
+    
+    # Create TF-IDF vectorizer
+    vectorizer = TfidfVectorizer(
+        max_features=5000,
+        stop_words='english',
+        ngram_range=(1, 2),
+        min_df=2
+    )
+    
+    tfidf_matrix = vectorizer.fit_transform(documents)
+    
+    return vectorizer, tfidf_matrix, paper_ids
+
+def search_papers(query, vectorizer, tfidf_matrix, paper_ids, df, top_k=50):
+    """Search papers using TF-IDF similarity"""
+    if not query.strip():
+        return df
+    
+    # Transform query
+    query_vector = vectorizer.transform([query])
+    
+    # Calculate similarities
+    similarities = cosine_similarity(query_vector, tfidf_matrix).flatten()
+    
+    # Get top papers
+    top_indices = similarities.argsort()[::-1][:top_k]
+    top_paper_ids = [paper_ids[i] for i in top_indices]
+    top_scores = similarities[top_indices]
+    
+    # Filter dataframe and add relevance scores
+    search_results = df[df['paper_id'].isin(top_paper_ids)].copy()
+    
+    # Add relevance scores
+    score_mapping = dict(zip(top_paper_ids, top_scores))
+    search_results['relevance_score'] = search_results['paper_id'].map(score_mapping)
+    
+    # Sort by relevance
+    search_results = search_results.sort_values('relevance_score', ascending=False)
+    
+    return search_results
+
 def main():
     st.title("📚 NeurIPS 2025 Paper Explorer")
     st.markdown("Explore and discover papers from NeurIPS 2025")
@@ -28,6 +108,26 @@ def main():
     df = load_data()
     if df is None:
         return
+    
+    abstracts = load_abstracts()
+    
+    # Prepare search index
+    with st.spinner("Preparing search index..."):
+        vectorizer, tfidf_matrix, paper_ids = prepare_search_index(df, abstracts)
+    
+    # Search box
+    st.header("🔍 Search Papers")
+    search_query = st.text_input(
+        "Search by title, keywords, theme, or abstract content:",
+        placeholder="e.g., neural networks, computer vision, transformers..."
+    )
+    
+    # Apply search if query exists
+    if search_query.strip():
+        df = search_papers(search_query, vectorizer, tfidf_matrix, paper_ids, df)
+        if len(df) == 0:
+            st.warning("No papers found matching your search.")
+            return
     
     # Sidebar info and filters
     with st.sidebar:
@@ -104,12 +204,20 @@ def main():
     display_df = filtered_df[display_columns]
     
     # Display the filtered dataframe
+    display_df_columns = display_df.columns.tolist()
+    if 'relevance_score' in display_df_columns:
+        # Move relevance score to front if it exists
+        display_df_columns.remove('relevance_score')
+        display_df_columns.insert(1, 'relevance_score')
+        display_df = display_df[display_df_columns]
+    
     st.dataframe(
         display_df,
         use_container_width=True,
         height=600,
         column_config={
             "paper_id": st.column_config.NumberColumn("ID", width="small"),
+            "relevance_score": st.column_config.NumberColumn("Relevance", format="%.3f", width="small"),
             "name": st.column_config.TextColumn("Paper Title", width="large"),
             "speakers/authors": st.column_config.TextColumn("Authors", width="medium"),
             "type": st.column_config.TextColumn("Type", width="small"),
