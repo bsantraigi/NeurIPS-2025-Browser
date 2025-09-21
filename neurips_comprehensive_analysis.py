@@ -374,7 +374,13 @@ class NeurIPSAnalyzer:
                 'sample_titles': cluster_papers['clean_name'].head(3).tolist()
             })
         
-        return pd.DataFrame(cluster_analysis)
+        cluster_df = pd.DataFrame(cluster_analysis)
+        
+        # Map cluster themes back to the main dataframe
+        cluster_theme_map = dict(zip(cluster_df['cluster'], cluster_df['theme']))
+        self.df['cluster_theme'] = self.df['topic_cluster'].map(cluster_theme_map)
+        
+        return cluster_df
     
     def _identify_cluster_theme(self, cluster_text):
         """Identify the dominant theme of a cluster using pattern matching"""
@@ -779,8 +785,6 @@ class NeurIPSAnalyzer:
             # Core paper information
             'name',                          # Original paper title
             'clean_name',                    # Cleaned paper title
-            'abstract',                      # Original abstract
-            'clean_abstract',                # Cleaned abstract
             'speakers/authors',              # Original authors string
             'author_list',                   # Parsed authors list
             'num_authors',                   # Number of authors
@@ -826,7 +830,7 @@ class NeurIPSAnalyzer:
         # Convert list columns to string representation for TSV export
         for col in export_df.columns:
             if export_df[col].dtype == 'object':
-                export_df[col] = export_df[col].apply(lambda x: str(x) if pd.notna(x) else '')
+                export_df[col] = export_df[col].apply(lambda x: str(x) if x is not None and not (isinstance(x, float) and pd.isna(x)) else '')
         
         # Add paper index as first column
         export_df.insert(0, 'paper_id', range(1, len(export_df) + 1))
