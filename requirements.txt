@@ -1,0 +1,27 @@
+# Core data science libraries
+pandas
+numpy
+
+# Machine learning and NLP
+scikit-learn
+sentence-transformers
+
+# Deep learning (PyTorch)
+torch
+
+# Visualization
+matplotlib
+seaborn
+
+# Network analysis
+networkx
+
+# Web application framework
+streamlit
+
+# Optional GPU support
+# For AMD GPUs: uncomment the line below
+# torch-audio>=2.0.0
+
+# Note: sentence-transformers is optional for the comprehensive analysis
+# If not available, the system will fall back to TF-IDF analysis
