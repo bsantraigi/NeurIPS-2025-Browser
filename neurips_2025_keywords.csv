@@ -1,0 +1,51 @@
+keyword,score,type,word_count
+models,0.05199004723942866,single_word,1
+model,0.046743827491652686,single_word,1
+data,0.04649578656348784,single_word,1
+learning,0.04209223942009676,single_word,1
+language models,0.03869432585673716,multi_word,2
+state art,0.037378131444427615,multi_word,2
+real world,0.03667548395071055,multi_word,2
+training,0.036321493797346914,single_word,1
+based,0.035914070129454675,single_word,1
+reasoning,0.035810921948905984,single_word,1
+large language models,0.03499215442046936,multi_word,3
+performance,0.03404342702255252,single_word,1
+methods,0.03313111931934052,single_word,1
+large language models llms,0.03269212251757466,multi_word,4
+large language,0.031225878463902186,multi_word,2
+tasks,0.03086537435546956,single_word,1
+framework,0.02845893859972835,single_word,1
+language,0.028153500825175082,single_word,1
+language models llms,0.027335477866435632,multi_word,3
+extensive experiments,0.02682168362535689,multi_word,2
+time,0.026589601765431372,single_word,1
+method,0.02629020296281743,single_word,1
+propose,0.026238705981702894,single_word,1
+existing,0.026187637169318812,single_word,1
+large,0.025994849448691276,single_word,1
+llms,0.025898755274542423,single_word,1
+image,0.024861669715737528,single_word,1
+fine tuning,0.024552771311909995,multi_word,2
+generation,0.024315584194095505,single_word,1
+introduce,0.023813045363761644,single_word,1
+high,0.023453818543761936,single_word,1
+e g,0.023330567429021155,multi_word,2
+multi,0.023208035604221314,single_word,1
+demonstrate,0.02304993129388316,single_word,1
+novel,0.02285117804283525,single_word,1
+models llms,0.022821264765042787,multi_word,2
+optimization,0.022800511544765888,single_word,1
+diffusion,0.02277689258017765,single_word,1
+task,0.022739574662153206,single_word,1
+approach,0.022662142892032777,single_word,1
+reinforcement learning,0.02258803323215986,multi_word,2
+state,0.02255509421353835,single_word,1
+real,0.022165199469781693,single_word,1
+neural networks,0.021959967771940318,multi_word,2
+neural,0.021912023919947943,single_word,1
+results,0.02173700299805265,single_word,1
+large scale,0.021706815915241907,multi_word,2
+datasets,0.02163317424545134,single_word,1
+experiments,0.021575330384327573,single_word,1
+using,0.020956019512920903,single_word,1
